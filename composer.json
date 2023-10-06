@@ -1,0 +1,13 @@
+{
+    "name": "ekok/vanilla-cms",
+    "description": "CMS Vanilla Flavoured",
+    "keywords": ["php", "php8", "cms"],
+    "type": "project",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Eko Kurniawan",
+            "email": "ekokurniawanbs@gmail.com"
+        }
+    ]
+}
