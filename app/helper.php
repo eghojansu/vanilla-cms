@@ -152,5 +152,10 @@ function vc_dump(...$values) {
     echo '<pre>';
     var_dump(...$values);
     echo '</pre>';
+}
+
+function vc_dd(...$values) {
+    vc_dump(...$values);
+
     exit;
 }
