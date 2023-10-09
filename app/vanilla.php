@@ -30,8 +30,7 @@ function vc_mark($key, $mark = false) {
                 $marker['elapsed'] = isset($marker['time']) ? microtime(true) - $marker['time'] : 0;
                 $marker['usage'] = isset($marker['mem']) ? memory_get_usage() - $marker['mem'] : 0;
 
-                $markers = vc_config('markers');
-                $markers[$as] = $marker;
+                vc_globals('markers', $as, $marker);
             } else {
                 $marks[$key]['time'] = microtime(true);
                 $marks[$key]['mem'] = memory_get_usage();
@@ -46,13 +45,31 @@ function vc_mark($key, $mark = false) {
 
 function vc_config_defaults() {
     $dir = vc_fixslashes(__DIR__);
+    $pdir = dirname($dir);
 
     return array(
         'app_dir' => $dir,
         'dev' => false,
         'env' => 'production',
-        'project_dir' => dirname($dir),
+        'pages_dir' => $dir . '/pages',
+        'project_dir' => $pdir,
+        'route_cache' => 'route.cache',
+        'var_dir' => $pdir . '/var',
     );
+}
+
+function vc_dir($name, $path = null, $create = null, $permission = 0755) {
+    $dir = vc_config($name) ?? vc_config($name . '_dir');
+
+    if ($dir && $create && !file_exists($dir)) {
+        mkdir($dir, $permission, true);
+    }
+
+    return $dir && $path ? $dir . '/' . ltrim($path, '/') : $dir;
+}
+
+function vc_cache_file($name) {
+    return $name ? vc_dir('var', 'cache/' . $name, true) : null;
 }
 
 function vc_globals($root = null, $key = null, $value = null, $add = null) {
@@ -84,9 +101,14 @@ function vc_globals($root = null, $key = null, $value = null, $add = null) {
     $all = is_array($key);
 
     if ($set) {
+        if (!$hive) {
+            $hive = array();
+        }
+
         if ($all && null == $add) {
             $hive = $hive ? array_merge($hive, $key) : $key;
         } else if ($all && $add) {
+            var_dump($hive, $add);die;
             $hive[$key][$add] = $value;
         } else {
             $hive[$key] = $value;
@@ -123,7 +145,7 @@ function vc_config($key = null, $value = null, $add = null) {
 }
 
 function vc_dispatch($event, ...$args) {
-    $dispatchers = vc_config('events')[$event] ?? null;
+    $dispatchers = vc_globals('events')[$event] ?? null;
 
     if (!$dispatchers) {
         return;
@@ -138,14 +160,24 @@ function vc_dispatch($event, ...$args) {
 }
 
 function vc_listen($event, $handle, $priority = 0) {
-    $handlers = vc_config('events')[$event] ?? array();
+    $handlers = vc_globals('events')[$event] ?? array();
     $handlers[] = compact('handle', 'priority');
 
     if (isset($handlers[1])) {
         usort($handlers, fn($a, $b) => $b['priority'] <=> $a['priority']);
     }
 
-    vc_config('events', $handlers, $event);
+    vc_globals('events', $event, $handlers);
+}
+
+function vc_share(...$vars) {
+    if ($vars) {
+        vc_globals('shared', array_merge(...$vars), true, true);
+
+        return;
+    }
+
+    return vc_globals('shared');
 }
 
 function vc_load() {
@@ -159,32 +191,167 @@ function vc_load() {
 
 function vc_handled($handled = null) {
     if (null !== $handled) {
-        vc_config('handled', $handled);
+        vc_globals('handled', $handled);
 
         return;
     }
 
-    return vc_config('handled') ?? false;
+    return vc_globals('handled') ?? false;
 }
 
 function vc_handle($stop_) {
-    $globals = vc_config('globals') ?? array();
-
-    extract($globals, EXTR_PREFIX_SAME, '_');
-    include vc_config('handler') ?? vc_resolve_handler();
+    extract(vc_share() ?? array(), EXTR_PREFIX_SAME, '_');
+    include vc_config('handler') ?? vc_resolve_handler(vc_path());
     $stop_();
 }
 
-function vc_resolve_handler() {
-    // TODO: resolving request
-    vc_base_url();
-    vc_dump(vc_globals('server'));
+function vc_resolve_handler($path) {
+    $route = vc_route_match($path);
+
+    if (isset($route['params'])) {
+        vc_share($route['params'], $route['data']);
+    }
+
+    return $route['handler'];
+}
+
+function vc_routes($cache_store = null) {
+    $cache = vc_config('dev') ? false : vc_cache_file(vc_config('route_cache'));
+    $routes = vc_globals('routes');
+
+    if ($routes && $cache && $cache_store) {
+        file_put_contents($cache, serialize($routes));
+    }
+
+    if (!$routes && $cache && file_exists($cache)) {
+        vc_globals('routes', $routes = unserialize(file_get_contents($cache)));
+    }
+
+    return $routes;
+}
+
+function vc_route($path, $handler, $verbs = 'GET', $options = null) {
+    $routes = vc_routes();
+    $add = &$routes['/' . ltrim($path, '/')];
+
+    $route = (array) $options;
+    $route['handler'] = $handler;
+
+    vc_each($verbs, function ($verb) use (&$add, $route) {
+        $add[strtoupper($verb)] = $route;
+    }, null, 0);
+
+    vc_globals('routes', $routes, true);
+}
+
+function vc_route_match($path) {
+    $routes = vc_routes(true);
+
+    return $routes[$path] ?? $routes[strtolower($path)] ?? vc_route_match_regex($path, $routes) ?? array(
+        'handler' => 'defaults/e404.php',
+    );
+}
+
+function vc_route_match_regex($path, $routes) {
+    $matches = array();
+    $match = vc_each(
+        $routes,
+        function ($route) use (&$matches, $path) {
+            return isset($route['pattern']) && preg_match($route['pattern'], $path, $matches);
+        },
+        null,
+        7,
+    );
+
+    if (!$match || ($match['params'] && null === ($params = vc_route_match_params($match['params'], $matches)))) {
+        return null;
+    }
+
+    return array(
+        'handler' => $match['handler'],
+        'params' => $params ?? null,
+    );
+}
+
+function vc_route_match_params($params, $matches) {
+    return vc_each(
+        $params,
+        function ($required, $param, $params) use ($matches) {
+            if (null === $params || ($required && !isset($matches[$param]))) {
+                return null;
+            }
+
+            if (str_ends_with($param, '*')) {
+                $params[rtrim($param, '*')] = vc_split(end($matches), '/');
+            } else {
+                $params[$param] = $matches[$param];
+            }
+
+            return $params;
+        },
+        array(),
+    );
+}
+
+function vc_request($key = null) {
+    if (!$key) {
+        return vc_globals('server');
+    }
+
+    $val = vc_globals('request', $key) ?? vc_globals('server', $key);
+
+    if ($val) {
+        return $val;
+    }
+
+    list(
+        $host,
+        $port,
+        $method,
+        $uri,
+        $https,
+    ) = vc_globals(
+        'server',
+        array(
+            'HTTP_HOST',
+            'SERVER_PORT',
+            'REQUEST_METHOD',
+            'REQUEST_URI',
+            'HTTPS',
+        ),
+    );
+
+    $use_scheme = 0 === strcasecmp('off', $https ?? 'off') ? 'http' : 'https';
+    list($use_host, $use_port) = explode(':', $host . ':' . $port);
+
+    $base_url = $use_scheme . '://' . $use_host;
+    $base_path = '';
+    $path = $uri;
+    $verb = strtoupper($method ?? 'GET');
+
+    if (!in_array($use_port, array(80, 443))) {
+        $base_url .= ':' . $use_port;
+    }
+
+    if (false !== $pos = strpos($path, '?')) {
+        $path = substr($path, 0, $pos);
+    }
+
+    $path = rawurldecode($path);
+
+    vc_globals('request', compact('base_path', 'base_url', 'path', 'verb'), true, true);
+
+    return vc_globals('request', $key);
 }
 
 function vc_base_url() {
-    $svr = vc_globals('server', array('host' => 'HTTP_HOST', 'port' => 'SERVER_PORT'));
+    return vc_request('base_url');
+}
 
-    list($host, $port) = explode(':', $svr['host'] . ':' . $svr['port']);
+function vc_base_path() {
+    return vc_request('base_path');
+}
 
-    vc_dump($host, $port);
+function vc_path() {
+    return vc_request('path');
 }
