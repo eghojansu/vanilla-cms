@@ -4,7 +4,7 @@ function vc_run($env_file = null) {
     vc_mark($start = vc_hash());
     vc_config('ure', $env_file);
     vc_mark($boot = vc_hash());
-    vc_load();
+    vc_load_bootstrap();
     vc_mark(compact('boot', 'start'), true);
     vc_dispatch('boot');
 
@@ -12,8 +12,12 @@ function vc_run($env_file = null) {
         return;
     }
 
-    vc_dispatch('load');
-    vc_handle(fn() => vc_mark($start, true));
+    vc_dispatch('request');
+
+    vc_load(vc_handle(), vc_share());
+    vc_mark($start, true);
+
+    vc_load_exists(vc_layout(), vc_share());
 }
 
 function vc_hash($str = null) {
@@ -24,7 +28,7 @@ function vc_mark($key, $mark = false) {
     static $marks = array();
 
     if ($key) {
-        vc_each($key, function ($key, $as) use (&$marks, $mark) {
+        vc_walk($key, function ($key, $as) use (&$marks, $mark) {
             if ($mark) {
                 $marker = $marks[$key] ?? array();
                 $marker['elapsed'] = isset($marker['time']) ? microtime(true) - $marker['time'] : 0;
@@ -35,7 +39,7 @@ function vc_mark($key, $mark = false) {
                 $marks[$key]['time'] = microtime(true);
                 $marks[$key]['mem'] = memory_get_usage();
             }
-        }, null, 0);
+        });
 
         return;
     }
@@ -53,6 +57,7 @@ function vc_config_defaults() {
         'env' => 'production',
         'pages_dir' => $dir . '/pages',
         'project_dir' => $pdir,
+        'quiet' => false,
         'route_cache' => 'route.cache',
         'var_dir' => $pdir . '/var',
     );
@@ -117,6 +122,16 @@ function vc_globals($root = null, $key = null, $value = null) {
     return $hive[$key] ?? null;
 }
 
+function vc_globals_set($root, $set, $value) {
+    if ($set) {
+        vc_globals($root, $value, true);
+
+        return;
+    }
+
+    return vc_globals($root);
+}
+
 function vc_config($key = null, $value = null, $add = true) {
     if ('ure' === $key) {
         $config = vc_globals('config') ?? vc_config_defaults();
@@ -144,11 +159,11 @@ function vc_dispatch($event, ...$args) {
     }
 
     $data = (object) (compact('args') + array('done' => false));
-    vc_each($dispatchers, function ($dispatcher, $i, $data) {
+    vc_coalesce($dispatchers, function ($dispatcher) use ($data) {
         $dispatcher['handle']($data);
 
-        return $data->done;
-    }, $data, 5);
+        return $data->done ? true : null;
+    });
 }
 
 function vc_listen($event, $handle, $priority = 0) {
@@ -170,7 +185,7 @@ function vc_routes($cache_store = null) {
         vc_write($cache, serialize($routes));
     }
 
-    if (!$routes && $cache && file_exists($cache)) {
+    if (!$routes && $cache && is_file($cache)) {
         vc_globals('routes', $routes = unserialize(vc_read($cache)));
     }
 
@@ -184,51 +199,65 @@ function vc_route($path, $handler, $verbs = 'GET', $options = null) {
     $route = (array) $options;
     $route['handler'] = $handler;
 
-    vc_each($verbs, function ($verb) use (&$add, $route) {
+    vc_walk($verbs, function ($verb) use (&$add, $route) {
         $add[strtoupper($verb)] = $route;
-    }, null, 0);
+    });
 
     vc_globals('routes', $routes, true);
 }
 
 function vc_share(...$vars) {
-    if ($vars && ($shares = array_filter($vars, 'is_array'))) {
-        vc_globals('shared', array_merge(...$shares), true);
-
-        return;
-    }
-
-    return vc_globals('shared');
-}
-
-function vc_load() {
-    vc_each(
-        vc_config('loaders'),
-        fn($loader) => file_exists($loader) && is_callable($load = require $loader) && $load(),
-        null,
-        0,
+    return vc_globals_set(
+        'shared',
+        $vars && ($shares = array_filter($vars, 'is_array')),
+        isset($shares) ? array_merge(...$shares) : null,
     );
 }
 
+function vc_layout($file = null) {
+    return vc_globals_set('layout', !!$file, $file);
+}
+
+function vc_load($file, $args = null, $safe = null) {
+    $path = is_file($file) ? $file : vc_view($file);
+
+    return vc_loader($safe)($path, $args ?? array());
+}
+
+function vc_load_exists($file, $args = null) {
+    return vc_load($file, $args, true);
+}
+
+function vc_load_bootstrap() {
+    vc_walk(vc_config('loaders'), vc_loader());
+}
+
+function vc_loader($safe = null) {
+    return function () use ($safe) {
+        if ($safe && !is_file(func_get_arg(0))) {
+            return null;
+        }
+
+        if (func_num_args() > 1) {
+            extract(func_get_arg(1));
+        }
+
+        $load = require func_get_arg(0);
+
+        if (is_callable($load)) {
+            return $load();
+        }
+
+        return $load;
+    };
+}
+
 function vc_handled($handled = null) {
-    if (null !== $handled) {
-        vc_globals('handled', $handled);
-
-        return;
-    }
-
-    return vc_globals('handled') ?? false;
+    return vc_globals_set('handled', null !== $handled, $handled);
 }
 
-function vc_handle($stop_) {
-    $handler_ = vc_config('handler') ?? vc_do_handle(vc_path());
-    $stop_();
-
-    extract(vc_share() ?? array(), EXTR_PREFIX_SAME, '_');
-    include $handler_;
-}
-
-function vc_do_handle($path) {
+function vc_handle() {
+    $path = vc_path();
     $verb = vc_verb();
     $routes = vc_routes(true);
     $match = $routes[$path] ?? $routes[strtolower($path)] ?? vc_route_match($path, $routes) ?? array(
@@ -241,26 +270,24 @@ function vc_do_handle($path) {
     return $route['handler'];
 }
 
-function vc_resolve_handler($file) {
-    return vc_dir('pages', $file);
+function vc_view($file) {
+    return vc_coalesce('pages', fn ($dir) => is_file($path = vc_dir($dir, $file)) ? $path : null);
 }
 
 function vc_error_handler($code) {
     $data = compact('code');
-    $handler = vc_config('error_handler') ?? vc_resolve_handler('_defaults/error.php');
+    $handler = vc_config('error_handler') ?? vc_view('_defaults/error.php');
 
     return compact('handler', 'data');
 }
 
 function vc_route_match($path, $routes) {
     $matches = array();
-    $match = vc_each(
+    $match = vc_find(
         $routes,
         function ($route) use (&$matches, $path) {
             return isset($route['pattern']) && preg_match($route['pattern'], $path, $matches);
         },
-        null,
-        7,
     );
 
     if (!$match || ($match['params'] && null === ($params = vc_route_match_params($match['params'], $matches)))) {
@@ -274,7 +301,7 @@ function vc_route_match($path, $routes) {
 }
 
 function vc_route_match_params($params, $matches) {
-    return vc_each(
+    return vc_reduce(
         $params,
         function ($required, $param, $params) use ($matches) {
             if (null === $params || ($required && !isset($matches[$param]))) {
@@ -305,6 +332,7 @@ function vc_request($key = null) {
     }
 
     list(
+        $acceptable,
         $host,
         $port,
         $method,
@@ -313,6 +341,7 @@ function vc_request($key = null) {
     ) = vc_globals(
         'server',
         array(
+            'HTTP_ACCEPT',
             'HTTP_HOST',
             'SERVER_PORT',
             'REQUEST_METHOD',
@@ -328,6 +357,27 @@ function vc_request($key = null) {
     $base_path = '';
     $path = $uri;
     $verb = strtoupper($method ?? 'GET');
+    $accepts = vc_reduce(
+        vc_split($acceptable, ','),
+        function ($accept, $_, $accepts) {
+            if (false === $pos = strpos($accept, ';')) {
+                $mime = $accept;
+                $quality = 1.0;
+            } else {
+                $mime = substr($accept, 0, $pos);
+                $quality = (false === $pos = strpos($accept, 'q=')) ? 1.0 : floatval(substr($accept, $pos + 2));
+            }
+
+            $accepts[$mime] = $quality;
+
+            return $accepts;
+        },
+        array(),
+    );
+
+    uasort($accepts, fn($a, $b) => $b <=> $a);
+
+    $accepts = array_keys($accepts);
 
     if (!in_array($use_port, array(80, 443))) {
         $base_url .= ':' . $use_port;
@@ -339,9 +389,27 @@ function vc_request($key = null) {
 
     $path = rawurldecode($path);
 
-    vc_globals('request', compact('base_path', 'base_url', 'path', 'verb'), true);
+    vc_globals(
+        'request',
+        compact(
+            'accepts',
+            'base_path',
+            'base_url',
+            'path',
+            'verb',
+        ),
+        true,
+    );
 
     return vc_globals('request', $key);
+}
+
+function vc_accept($mime = null) {
+    if ($mime) {
+        // TODO: find match mime
+    }
+
+    return $mime ? in_array($mime, vc_request('accepts')) : vc_request('accepts');
 }
 
 function vc_base_url() {
@@ -365,5 +433,28 @@ function vc_write($file, $content) {
 }
 
 function vc_read($file) {
-    return file_exists($file) ? file_get_contents($file) : '';
+    return is_file($file) ? file_get_contents($file) : '';
+}
+
+function vc_response($content = null, $code = 200, $headers = null) {
+    if ($code) {
+        http_response_code($code);
+    }
+
+    vc_walk((array) $headers, 'header');
+
+    if ($content && !vc_config('quiet')) {
+        echo $content;
+    }
+}
+
+function vc_json($data, $code = 200, $headers = null) {
+    $customs = (array) $headers;
+    $customs[] = 'Content-Type: application/json';
+
+    vc_response(
+        is_string($data) ? $data : json_encode($data),
+        $code,
+        $customs,
+    );
 }

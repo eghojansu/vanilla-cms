@@ -16,6 +16,7 @@
 *                      6 = find index;
 *                      7 = find value;
 *                      8 = filters;
+*                      9 = coalesce;
 *
 * @return mixed The array after being processed, the carry or null if nothing to keep
 */
@@ -23,7 +24,7 @@ function vc_each($data, $fn, $carry = null, $keep = 2) {
     $values = vc_split($data);
     $reduce = null !== $carry || 1 === $keep;
     $result = match (true) {
-        6 === $keep, 7 === $keep => null,
+        6 === $keep, 7 === $keep, 9 === $keep => null,
         5 === $keep, 4 === $keep => false,
         $reduce => $carry,
         default => array(),
@@ -33,7 +34,12 @@ function vc_each($data, $fn, $carry = null, $keep = 2) {
         $stop = false;
         $res = $fn($value, $key, $result, $values, $data);
 
-        if (8 === $keep) {
+        if ($reduce) {
+            $result = $res;
+        } elseif (9 === $keep) {
+            $stop = null !== $res;
+            $result = $res;
+        } elseif (8 === $keep) {
             if ($res) {
                 $result[$key] = $value;
             }
@@ -52,8 +58,6 @@ function vc_each($data, $fn, $carry = null, $keep = 2) {
             $result[] = $res;
         } else if (2 === $keep) {
             $result[$key] = $res;
-        } elseif ($reduce) {
-            $result = $res;
         }
 
         if ($stop) {
@@ -64,6 +68,46 @@ function vc_each($data, $fn, $carry = null, $keep = 2) {
     if ($keep > 0) {
         return $result;
     }
+}
+
+function vc_walk($data, $fn) {
+    vc_each($data, $fn, null, 0);
+}
+
+function vc_reduce($data, $fn, $carry = null) {
+    return vc_each($data, $fn, $carry, 1);
+}
+
+function vc_map($data, $fn) {
+    return vc_each($data, $fn, null, 2);
+}
+
+function vc_indexing($data, $fn) {
+    return vc_each($data, $fn, null, 3);
+}
+
+function vc_every($data, $fn) {
+    return vc_each($data, $fn, null, 4);
+}
+
+function vc_some($data, $fn) {
+    return vc_each($data, $fn, null, 5);
+}
+
+function vc_index($data, $fn) {
+    return vc_each($data, $fn, null, 6);
+}
+
+function vc_find($data, $fn) {
+    return vc_each($data, $fn, null, 7);
+}
+
+function vc_filters($data, $fn) {
+    return vc_each($data, $fn, null, 8);
+}
+
+function vc_coalesce($data, $fn) {
+    return vc_each($data, $fn, null, 9);
 }
 
 function vc_tap($value, $fn, $check = null) {
@@ -158,4 +202,52 @@ function vc_dd(...$values) {
     vc_dump(...$values);
 
     exit;
+}
+
+function vc_title($str, ...$pass) {
+    return ucwords(strtolower($str), ...$pass);
+}
+
+function vc_slug($str) {
+    return preg_replace('/\W/', '-', strtolower($str));
+}
+
+function vc_rand($len = 8) {
+    return substr(str_shuffle('0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'), 0, $len);
+}
+
+function vc_number($value, $fractions = 0) {
+    return number_format($value, $fractions, ',', '.');
+}
+
+function vc_options($name, $find = null, $default = null) {
+    $options = vc_globals('options');
+
+    if (!$options) {
+        vc_globals('options', $options = require __DIR__ . '/options.php', true);
+    }
+
+    $group = $options[$name] ?? $default;
+
+    if (null === $find) {
+        return $group;
+    }
+
+    $found = array_search($find, $group);
+
+    return false === $found ? $default : $found;
+}
+
+function vc_data($name, $find = null) {
+    $data = vc_globals('data');
+
+    if (!$data) {
+        vc_globals('data', $data = require __DIR__ . '/data.php', true);
+    }
+
+    if ($find) {
+        return $data[$name][$find] ?? null;
+    }
+
+    return $data[$name] ?? null;
 }
