@@ -1,5 +1,7 @@
 <?php
 
+namespace Vc\Helper;
+
 /**
 * Looper's friend
 *
@@ -20,8 +22,8 @@
 *
 * @return mixed The array after being processed, the carry or null if nothing to keep
 */
-function vc_each($data, $fn, $carry = null, $keep = 2) {
-    $values = vc_split($data);
+function each($data, $fn, $carry = null, $keep = 2) {
+    $values = split($data);
     $reduce = null !== $carry || 1 === $keep;
     $result = match (true) {
         6 === $keep, 7 === $keep, 9 === $keep => null,
@@ -70,47 +72,47 @@ function vc_each($data, $fn, $carry = null, $keep = 2) {
     }
 }
 
-function vc_walk($data, $fn) {
-    vc_each($data, $fn, null, 0);
+function walk($data, $fn): void {
+    each($data, $fn, null, 0);
 }
 
-function vc_reduce($data, $fn, $carry = null) {
-    return vc_each($data, $fn, $carry, 1);
+function reduce($data, $fn, $carry = null): array {
+    return each($data, $fn, $carry, 1);
 }
 
-function vc_map($data, $fn) {
-    return vc_each($data, $fn, null, 2);
+function map($data, $fn): array {
+    return each($data, $fn, null, 2);
 }
 
-function vc_indexing($data, $fn) {
-    return vc_each($data, $fn, null, 3);
+function indexing($data, $fn) {
+    return each($data, $fn, null, 3);
 }
 
-function vc_every($data, $fn) {
-    return vc_each($data, $fn, null, 4);
+function every($data, $fn) {
+    return each($data, $fn, null, 4);
 }
 
-function vc_some($data, $fn) {
-    return vc_each($data, $fn, null, 5);
+function some($data, $fn) {
+    return each($data, $fn, null, 5);
 }
 
-function vc_index($data, $fn) {
-    return vc_each($data, $fn, null, 6);
+function index($data, $fn) {
+    return each($data, $fn, null, 6);
 }
 
-function vc_find($data, $fn) {
-    return vc_each($data, $fn, null, 7);
+function find($data, $fn) {
+    return each($data, $fn, null, 7);
 }
 
-function vc_filters($data, $fn) {
-    return vc_each($data, $fn, null, 8);
+function filters($data, $fn) {
+    return each($data, $fn, null, 8);
 }
 
-function vc_coalesce($data, $fn) {
-    return vc_each($data, $fn, null, 9);
+function coalesce($data, $fn) {
+    return each($data, $fn, null, 9);
 }
 
-function vc_tap($value, $fn, $check = null) {
+function tap($value, $fn, $check = null) {
     if (!is_callable($fn) || (null !== $check && !$check) || (is_callable($check) && !$check($value))) {
         return $value;
     }
@@ -118,13 +120,13 @@ function vc_tap($value, $fn, $check = null) {
     return $fn($value);
 }
 
-function vc_pick(&$values, $key, $default = null, $keep = 3, $pluck = false) {
+function pick(&$values, $key, $default = null, $keep = 3, $pluck = false) {
     if (!is_array($values)) {
         return $default;
     }
 
     if (is_array($key)) {
-        return vc_each(
+        return each(
             $key,
             function ($fallback, $key) use (&$values, $pluck, $default) {
                 if (is_numeric($key)) {
@@ -162,11 +164,11 @@ function vc_pick(&$values, $key, $default = null, $keep = 3, $pluck = false) {
     return $default;
 }
 
-function vc_pluck(&$values, $key, $default = null, $keep = 3) {
-    return vc_pick($values, $key, $default, $keep, true);
+function pluck(&$values, $key, $default = null, $keep = 3) {
+    return pick($values, $key, $default, $keep, true);
 }
 
-function vc_split($value, $separator = ',;|') {
+function split($value, $separator = ',;|') {
     if (is_iterable($value)) {
         return $value;
     }
@@ -178,23 +180,23 @@ function vc_split($value, $separator = ',;|') {
     return (array) $value;
 }
 
-function vc_fixslashes($str) {
+function fixslashes($str) {
     return strtr($str, '\\', '/');
 }
 
-function vc_merge(...$values) {
+function merge(...$values) {
     return array_merge(...array_filter($values, 'is_array'));
 }
 
-function vc_indexed($value) {
+function indexed($value) {
     return is_array($value) && (!$value || ctype_digit(implode('', array_keys($value))));
 }
 
-function vc_cli() {
+function cli() {
     return strncmp(PHP_SAPI, 'cli', 3);
 }
 
-function vc_dump(...$values) {
+function dump(...$values) {
     ob_clean();
 
     echo '<pre>';
@@ -202,56 +204,51 @@ function vc_dump(...$values) {
     echo '</pre>';
 }
 
-function vc_dd(...$values) {
-    vc_dump(...$values);
+function dd(...$values) {
+    dump(...$values);
 
     exit;
 }
 
-function vc_title($str, ...$pass) {
+function title($str, ...$pass) {
     return ucwords(strtolower($str), ...$pass);
 }
 
-function vc_slug($str) {
+function slug($str) {
     return preg_replace('/\W/', '-', strtolower($str));
 }
 
-function vc_rand($len = 8) {
+function rand($len = 8) {
     return substr(str_shuffle('0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'), 0, $len);
 }
 
-function vc_number($value, $fractions = 0) {
+function number($value, $fractions = 0) {
     return number_format($value, $fractions, ',', '.');
 }
 
-function vc_options($name, $find = null, $default = null) {
-    $options = vc_globals('options');
-
-    if (!$options) {
-        vc_globals('options', $options = require __DIR__ . '/options.php', true);
-    }
-
-    $group = $options[$name] ?? $default;
-
-    if (null === $find) {
-        return $group;
-    }
-
-    $found = array_search($find, $group);
-
-    return false === $found ? $default : $found;
+function write($file, $content) {
+    return file_put_contents($file, $content);
 }
 
-function vc_data($name, $find = null) {
-    $data = vc_globals('data');
+function read($file) {
+    return is_file($file) ? file_get_contents($file) : '';
+}
 
-    if (!$data) {
-        vc_globals('data', $data = require __DIR__ . '/data.php', true);
-    }
+function scandir($dir, $pattern = null, $root = null) {
+    return array_reduce(\scandir($dir) ?: array(), function ($items, $item) use ($dir, $pattern, $root) {
+        if (
+            ('.' === $item || '..' === $item)
+            || ($pattern && !preg_match($pattern, $item))
+        ) {
+            return $items;
+        }
 
-    if ($find) {
-        return $data[$name][$find] ?? null;
-    }
+        if (is_dir($path = $dir . '/' . $item)) {
+            array_push($items, ...scandir($path, $pattern, $dir));
+        } else {
+            $items[] = substr($path, strlen($root ?? $dir) + 1);
+        }
 
-    return $data[$name] ?? null;
+        return $items;
+    }, array());
 }

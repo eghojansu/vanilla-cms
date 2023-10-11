@@ -1,16 +1,20 @@
 <?php
 
-function vc_out($value) {
-    echo vc_safe($value);
+namespace Vc\Html;
+
+use Vc\Helper as h;
+
+function shout($value) {
+    echo safe($value);
 }
 
-function vc_safe($value) {
+function safe($value) {
     return htmlspecialchars($value);
 }
 
-function vc_html_tag($tag, $props = null, $children = null, $close = null) {
+function tag($tag, $props = null, $children = null, $close = null) {
     $content = $children;
-    $closeTag = $close ?? vc_html_tag_close($tag);
+    $closeTag = $close ?? tag_close($tag);
 
     if ($children instanceof \Closure) {
         $content = $children();
@@ -20,10 +24,10 @@ function vc_html_tag($tag, $props = null, $children = null, $close = null) {
         $content = implode('', $children);
     }
 
-    return '<' . $tag . vc_html_attr($props) . '>' . $content . ($closeTag ? '</' . $tag . '>' : '');
+    return '<' . $tag . attr($props) . '>' . $content . ($closeTag ? '</' . $tag . '>' : '');
 }
 
-function vc_html_attr($props) {
+function attr($props) {
     if (!$props) {
         return '';
     }
@@ -32,31 +36,31 @@ function vc_html_attr($props) {
         return ' ' . ltrim($props);
     }
 
-    return vc_each(
+    return h\reduce(
         $props,
-        fn ($value, $prop, $attr) => $attr . vc_html_attr_value($prop, $value),
+        fn ($value, $prop, $attr) => $attr . attr_value($prop, $value),
         '',
     );
 }
 
-function vc_html_attr_value($prop, $value) {
+function attr_value($prop, $value) {
     if (is_numeric($prop)) {
         if (null === $value || false === $value) {
             return '';
         }
 
-        return ' ' . vc_safe($value);
+        return ' ' . safe($value);
     }
 
     if (null === $value || false === $value || (in_array($prop, array('class')) && !$value)) {
         return '';
     }
 
-    $attr = ' ' . vc_safe($prop);
+    $attr = ' ' . safe($prop);
 
     if (is_array($value)) {
         if ('class' === $prop) {
-            $classes = vc_each(
+            $classes = h\reduce(
                 $value,
                 function ($name, $show, $classes) {
                     if (is_numeric($show)) {
@@ -73,18 +77,18 @@ function vc_html_attr_value($prop, $value) {
             );
 
             if ($classes) {
-                $attr .= '="' . implode(' ', array_map('vc_safe', array_unique($classes))) . '"';
+                $attr .= '="' . implode(' ', array_map('Vc\\Html\\safe', array_unique($classes))) . '"';
             }
         }
     } elseif (true !== $value) {
-        $attr .= '="' . (vc_html_prop_safe($prop) ? $value : vc_safe($value)) . '"';
+        $attr .= '="' . (prop_safe($prop) ? $value : safe($value)) . '"';
     }
 
     return $attr;
 }
 
-function vc_html_merge(...$props) {
-    return vc_each(
+function merge(...$props) {
+    return h\reduce(
         $props,
         function ($props, $key, $merged) {
             if (!$props) {
@@ -93,8 +97,8 @@ function vc_html_merge(...$props) {
 
             if (isset($props['class'])) {
                 $merged['class'] = array_merge(
-                    vc_pick($merged, 'class', array()),
-                    vc_split($props['class'], ' '),
+                    h\pick($merged, 'class', array()),
+                    h\split($props['class'], ' '),
                 );
 
                 unset($props['class']);
@@ -106,14 +110,14 @@ function vc_html_merge(...$props) {
     );
 }
 
-function vc_html_attr_merge(...$props) {
-    return vc_html_attr(vc_html_merge(...$props));
+function attr_merge(...$props) {
+    return attr(merge(...$props));
 }
 
-function vc_html_tag_close($tag) {
+function tag_close($tag) {
     return !in_array($tag, array('img', 'input', 'link'));
 }
 
-function vc_html_prop_safe($prop) {
+function prop_safe($prop) {
     return in_array($prop, array('onclick'));
 }
