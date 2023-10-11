@@ -171,7 +171,11 @@ function vc_split($value, $separator = ',;|') {
         return $value;
     }
 
-    return is_string($value) ? preg_split('/['. preg_quote($separator, '/') .']/', $value, -1, PREG_SPLIT_NO_EMPTY) : (array) $value;
+    if (is_string($value) && ($parts = preg_split('/['. preg_quote($separator, '/') .']/', $value, -1, PREG_SPLIT_NO_EMPTY))) {
+        return $parts;
+    }
+
+    return (array) $value;
 }
 
 function vc_fixslashes($str) {

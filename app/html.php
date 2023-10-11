@@ -1,5 +1,9 @@
 <?php
 
+function vc_out($value) {
+    echo vc_safe($value);
+}
+
 function vc_safe($value) {
     return htmlspecialchars($value);
 }

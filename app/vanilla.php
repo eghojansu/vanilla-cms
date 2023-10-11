@@ -4,6 +4,7 @@ function vc_run($env_file = null) {
     vc_mark($start = vc_hash());
     vc_config('ure', $env_file);
     vc_mark($boot = vc_hash());
+    vc_load_routes();
     vc_load_bootstrap();
     vc_mark(compact('boot', 'start'), true);
     vc_dispatch('boot');
@@ -53,8 +54,10 @@ function vc_config_defaults() {
 
     return array(
         'app_dir' => $dir,
+        'caseless' => true,
         'dev' => false,
         'env' => 'production',
+        'extension' => 'php',
         'pages_dir' => $dir . '/pages',
         'project_dir' => $pdir,
         'quiet' => false,
@@ -197,13 +200,57 @@ function vc_route($path, $handler, $verbs = 'GET', $options = null) {
     $add = &$routes['/' . ltrim($path, '/')];
 
     $route = (array) $options;
-    $route['handler'] = $handler;
+    $route['handler'] = file_exists($handler) ? $handler : vc_dir('pages', $handler);
+
+    if (empty($route['pattern'])) {
+        $route['pattern'] = vc_routify($path);
+    }
 
     vc_walk($verbs, function ($verb) use (&$add, $route) {
         $add[strtoupper($verb)] = $route;
     });
 
     vc_globals('routes', $routes, true);
+}
+
+function vc_routify($path) {
+    $normalize = str_replace('.', '/', '/' . ltrim($path, '/'));
+
+    if (str_ends_with($normalize, '/index')) {
+        $normalize = substr($normalize, 0, -6);
+    }
+
+    if (false === strpos($normalize, '@')) {
+        return $normalize;
+    }
+
+    return preg_replace_callback(
+        '/@(.+)/',
+        function ($match) {
+            return '-';
+        },
+        $normalize,
+    );
+}
+
+function vc_route_register($handler) {
+    if (!preg_match('/\.' . preg_quote($ext = vc_config('extension'), '/') . '$/i', $handler)) {
+        return;
+    }
+
+    $verbs = 'GET';
+    $path = substr($handler, 0, -strlen($ext)-1);
+
+    if (false !== $pos = strrpos($path, '.')) {
+        $verbs = str_replace('-', ',', substr($path, $pos + 1));
+        $path = substr($path, 0, $pos);
+    }
+
+    vc_route($path, $handler, $verbs);
+}
+
+function vc_load_routes() {
+    array_map(fn ($handler) => vc_route_register($handler), vc_scandir(vc_dir('pages'), '/^[^_]/'));
 }
 
 function vc_share(...$vars) {
@@ -357,9 +404,9 @@ function vc_request($key = null) {
     $base_path = '';
     $path = $uri;
     $verb = strtoupper($method ?? 'GET');
-    $accepts = vc_reduce(
-        vc_split($acceptable, ','),
-        function ($accept, $_, $accepts) {
+    $accepts = array_reduce(
+        (array) vc_split($acceptable, ','),
+        function ($accepts, $accept) {
             if (false === $pos = strpos($accept, ';')) {
                 $mime = $accept;
                 $quality = 1.0;
@@ -404,12 +451,21 @@ function vc_request($key = null) {
     return vc_globals('request', $key);
 }
 
-function vc_accept($mime = null) {
-    if ($mime) {
-        // TODO: find match mime
-    }
+function vc_mime_check($mime, $accept) {
+    return (
+        strcasecmp($accept, $mime) === 0
+        || str_starts_with($accept, $mime)
+        || str_ends_with($accept, $mime)
+        || '*/*' === $accept
+    );
+}
 
-    return $mime ? in_array($mime, vc_request('accepts')) : vc_request('accepts');
+function vc_accept($mime) {
+    return vc_some(vc_accepts(), fn ($accept) => vc_mime_check($mime, $accept));
+}
+
+function vc_wants($mime) {
+    return vc_mime_check($mime, vc_accepts()[0] ?? '');
 }
 
 function vc_base_url() {
@@ -424,6 +480,10 @@ function vc_path() {
     return vc_request('path');
 }
 
+function vc_accepts() {
+    return vc_request('accepts');
+}
+
 function vc_verb($is = null) {
     return $is ? 0 === strcasecmp($is, vc_request('verb')) : vc_request('verb');
 }
@@ -436,12 +496,33 @@ function vc_read($file) {
     return is_file($file) ? file_get_contents($file) : '';
 }
 
+function vc_scandir($dir, $pattern = null, $root = null) {
+    return array_reduce(scandir($dir), function ($items, $item) use ($dir, $pattern, $root) {
+        if (
+            ('.' === $item || '..' === $item)
+            || ($pattern && !preg_match($pattern, $item))
+        ) {
+            return $items;
+        }
+
+        if (is_dir($path = $dir . '/' . $item)) {
+            array_push($items, ...vc_scandir($path, $pattern, $dir));
+        } else {
+            $items[] = substr($path, strlen($root ?? $dir) + 1);
+        }
+
+        return $items;
+    }, array());
+}
+
 function vc_response($content = null, $code = 200, $headers = null) {
     if ($code) {
         http_response_code($code);
     }
 
-    vc_walk((array) $headers, 'header');
+    if (is_array($headers)) {
+        vc_walk($headers, fn ($header) => header($header));
+    }
 
     if ($content && !vc_config('quiet')) {
         echo $content;
@@ -449,12 +530,20 @@ function vc_response($content = null, $code = 200, $headers = null) {
 }
 
 function vc_json($data, $code = 200, $headers = null) {
-    $customs = (array) $headers;
-    $customs[] = 'Content-Type: application/json';
+    $heads = (array) $headers;
+    $heads[] = 'Content-Type: application/json';
 
     vc_response(
         is_string($data) ? $data : json_encode($data),
         $code,
-        $customs,
+        $heads,
     );
+    exit;
+}
+
+function vc_redirect($url, $permanent = null, $headers = null) {
+    $heads = (array) $headers;
+    $heads[] = 'Location: ' . $url;
+
+    vc_response(null, $permanent ? 301 : 302, $heads);
 }

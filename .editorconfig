@@ -8,8 +8,11 @@ charset = utf-8
 trim_trailing_whitespace = true
 insert_final_newline = false
 
+[*.php]
+insert_final_newline = true
+
 [*.{css,html,js,sass}]
 indent_size = 2
 
-[*.php]
-insert_final_newline = true
+[app/pages/**/*.php]
+indent_size = 2
